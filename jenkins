@@ -1,0 +1,76 @@
+pipeline {
+    agent any
+
+    environment {
+        ARTIFACTORY_SERVER_ID = 'Artifactory'
+        PYPI_REPO = 'pypi-local'  // Your Artifactory PyPI repo key
+        PACKAGE_NAME = 'saas_secrets'
+        VERSION = '0.1.0' // or dynamically read using a script
+    }
+
+    tools {
+        python 'Python-3.10' // Must be configured in Jenkins > Global Tool Configuration
+    }
+
+    stages {
+        stage('Setup') {
+            steps {
+                sh 'python --version'
+                sh 'pip install --upgrade pip setuptools wheel twine'
+            }
+        }
+
+        stage('Build Package') {
+            steps {
+                sh 'python setup.py sdist bdist_wheel'
+            }
+        }
+
+        stage('Upload to Artifactory') {
+            steps {
+                script {
+                    def server = Artifactory.server(ARTIFACTORY_SERVER_ID)
+
+                    def uploadSpec = """{
+                      "files": [
+                        {
+                          "pattern": "dist/*.whl",
+                          "target": "${PYPI_REPO}/",
+                          "props": "version=${VERSION};python.package.name=${PACKAGE_NAME}"
+                        },
+                        {
+                          "pattern": "dist/*.tar.gz",
+                          "target": "${PYPI_REPO}/",
+                          "props": "version=${VERSION};python.package.name=${PACKAGE_NAME}"
+                        }
+                      ]
+                    }"""
+
+                    server.upload spec: uploadSpec
+                }
+            }
+        }
+
+        stage('Publish Build Info') {
+            steps {
+                script {
+                    def server = Artifactory.server(ARTIFACTORY_SERVER_ID)
+                    def buildInfo = server.publishBuildInfo()
+                }
+            }
+        }
+    }
+
+    post {
+        success {
+            mail to: 'test@test.com',
+                 subject: "✅ Jenkins job succeeded: ${env.JOB_NAME} #${env.BUILD_NUMBER}",
+                 body: "Package ${PACKAGE_NAME} ${VERSION} uploaded to Artifactory."
+        }
+        failure {
+            mail to: 'test@test.com',
+                 subject: "❌ Jenkins job failed: ${env.JOB_NAME} #${env.BUILD_NUMBER}",
+                 body: "See details: ${env.BUILD_URL}"
+        }
+    }
+}
